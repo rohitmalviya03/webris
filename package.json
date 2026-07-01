@@ -3,13 +3,17 @@
   "version": "1.0.0",
   "description": "A complete SaaS Radiology Information System (RIS) with two separate portals: **Diagnostic Center Portal** and **Radiologist Portal**.",
   "main": "index.js",
-  "scripts": {},
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "preview": "wrangler dev"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
     "@playwright/test": "^1.61.0",
-    "@types/node": "^26.0.0"
+    "@types/node": "^26.0.0",
+    "wrangler": "^4.106.0"
   }
 }

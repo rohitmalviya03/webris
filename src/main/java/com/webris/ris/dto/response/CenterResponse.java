@@ -29,6 +29,7 @@ public class CenterResponse {
     private LocalDateTime planStartDate;
     private LocalDateTime planEndDate;
     private Integer maxStudiesPerMonth;
+    private Boolean requireReportApproval;
 
     private LocalDateTime createdAt;
 

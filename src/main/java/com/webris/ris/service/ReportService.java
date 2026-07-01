@@ -41,9 +41,18 @@ public class ReportService {
         report.setRecommendations(request.getRecommendations());
 
         if (request.isSubmit()) {
-            report.setStatus(ReportStatus.SUBMITTED);
             report.setSubmittedAt(LocalDateTime.now());
-            study.setStatus(StudyStatus.REPORT_COMPLETED);
+            boolean requiresApproval = study.getCenter() != null
+                    && Boolean.TRUE.equals(study.getCenter().getRequireReportApproval());
+            if (requiresApproval) {
+                report.setStatus(ReportStatus.SUBMITTED);
+                study.setStatus(StudyStatus.REPORT_COMPLETED);
+            } else {
+                // Center configured for auto-approval — skip manual review step
+                report.setStatus(ReportStatus.APPROVED);
+                report.setApprovedAt(LocalDateTime.now());
+                study.setStatus(StudyStatus.APPROVED);
+            }
         } else {
             report.setStatus(ReportStatus.DRAFT);
             study.setStatus(StudyStatus.REPORT_PENDING);

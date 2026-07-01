@@ -16,4 +16,5 @@ public class AuthResponse {
     private String role;
     private Long centerId;
     private String centerName;
+    private Boolean requireReportApproval;
 }

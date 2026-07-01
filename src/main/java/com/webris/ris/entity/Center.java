@@ -64,6 +64,10 @@ public class Center {
 
     private String notes;
 
+    @Column(name = "require_report_approval")
+    @Builder.Default
+    private Boolean requireReportApproval = true;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

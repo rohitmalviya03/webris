@@ -1,0 +1,20 @@
+CREATE TABLE test_catalog (
+    id                      BIGINT          NOT NULL AUTO_INCREMENT,
+    center_id               BIGINT          NOT NULL,
+    test_name               VARCHAR(255)    NOT NULL,
+    short_name              VARCHAR(50),
+    modality                VARCHAR(50),
+    department              VARCHAR(100),
+    price                   DECIMAL(10, 2),
+    mrp                     DECIMAL(10, 2),
+    duration_minutes        INT,
+    report_tat_hours        INT,
+    preparation_instructions TEXT,
+    description             TEXT,
+    is_active               TINYINT(1)      NOT NULL DEFAULT 1,
+    created_at              DATETIME,
+    updated_at              DATETIME,
+    PRIMARY KEY (id),
+    KEY fk_test_catalog_center (center_id),
+    CONSTRAINT fk_test_catalog_center FOREIGN KEY (center_id) REFERENCES centers (id)
+);

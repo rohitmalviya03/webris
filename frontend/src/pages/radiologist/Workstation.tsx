@@ -8,6 +8,7 @@ import {
 import toast from 'react-hot-toast'
 import api from '../../services/api'
 import { Study, Report } from '../../types'
+import { useAuthStore } from '../../store/authStore'
 
 interface ReportTemplate {
   id: number
@@ -29,6 +30,8 @@ const OHIF_BASE = '/ohif'
 export default function Workstation() {
   const { studyId } = useParams<{ studyId: string }>()
   const qc = useQueryClient()
+  const { user } = useAuthStore()
+  const requiresApproval = user?.requireReportApproval !== false
 
   const [clinicalHistory,  setClinicalHistory]  = useState('')
   const [findings,         setFindings]         = useState('')
@@ -108,7 +111,13 @@ export default function Workstation() {
     onSuccess: (_, submit) => {
       qc.invalidateQueries({ queryKey: ['report-study', studyId] })
       qc.invalidateQueries({ queryKey: ['my-cases'] })
-      toast.success(submit ? 'Report submitted for approval' : 'Draft saved')
+      toast.success(
+        submit
+          ? requiresApproval
+            ? 'Report submitted — awaiting approval'
+            : 'Report auto-approved and ready for print'
+          : 'Draft saved'
+      )
     },
     onError: () => toast.error('Save failed'),
   })
@@ -368,7 +377,9 @@ export default function Workstation() {
                 </div>
                 <button
                   onClick={() => {
-                    if (confirm('Reopen this approved report for editing? It will need to be re-submitted for approval.')) {
+                    if (confirm(requiresApproval
+                      ? 'Reopen this approved report for editing? It will need to be re-submitted for approval.'
+                      : 'Reopen this approved report for editing? It will be auto-approved again on re-submission.')) {
                       modifyMutation.mutate()
                     }
                   }}

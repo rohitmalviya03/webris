@@ -2,22 +2,89 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import {
   LayoutDashboard, Users, Stethoscope, CreditCard,
-  UserCheck, ClipboardCheck, LogOut, Activity, Menu, FileText, KeyRound, FlaskConical
+  UserCheck, ClipboardCheck, LogOut, Activity, Menu,
+  FileText, KeyRound, FlaskConical, Settings
 } from 'lucide-react'
 import { useState } from 'react'
 import clsx from 'clsx'
+import type { Role } from '../../types'
 
-const navItems = [
-  { to: '/center/dashboard',   label: 'Dashboard',    icon: LayoutDashboard },
-  { to: '/center/patients',    label: 'Patients',     icon: Users },
-  { to: '/center/studies',     label: 'Studies',      icon: Stethoscope },
-  { to: '/center/billing',     label: 'Billing',      icon: CreditCard },
-  { to: '/center/assignments', label: 'Assignment',   icon: UserCheck },
-  { to: '/center/approvals',   label: 'Approvals',    icon: ClipboardCheck },
-  { to: '/center/tests',       label: 'Tests',        icon: FlaskConical },
-  { to: '/center/templates',   label: 'Templates',    icon: FileText },
-  { to: '/center/users',       label: 'Users',        icon: KeyRound },
+interface NavItem {
+  to: string
+  label: string
+  icon: React.ElementType
+  roles: Role[]
+}
+
+const navItems: NavItem[] = [
+  {
+    to: '/center/dashboard',
+    label: 'Dashboard',
+    icon: LayoutDashboard,
+    roles: ['CENTER_ADMIN', 'RECEPTIONIST', 'TECHNICIAN', 'REPORT_APPROVER'],
+  },
+  {
+    to: '/center/patients',
+    label: 'Patients',
+    icon: Users,
+    roles: ['CENTER_ADMIN', 'RECEPTIONIST'],
+  },
+  {
+    to: '/center/studies',
+    label: 'Studies',
+    icon: Stethoscope,
+    roles: ['CENTER_ADMIN', 'RECEPTIONIST', 'TECHNICIAN'],
+  },
+  {
+    to: '/center/billing',
+    label: 'Billing',
+    icon: CreditCard,
+    roles: ['CENTER_ADMIN', 'RECEPTIONIST'],
+  },
+  {
+    to: '/center/assignments',
+    label: 'Assignment',
+    icon: UserCheck,
+    roles: ['CENTER_ADMIN', 'REPORT_APPROVER'],
+  },
+  {
+    to: '/center/approvals',
+    label: 'Approvals',
+    icon: ClipboardCheck,
+    roles: ['CENTER_ADMIN', 'REPORT_APPROVER'],
+  },
+  {
+    to: '/center/tests',
+    label: 'Tests',
+    icon: FlaskConical,
+    roles: ['CENTER_ADMIN'],
+  },
+  {
+    to: '/center/templates',
+    label: 'Templates',
+    icon: FileText,
+    roles: ['CENTER_ADMIN'],
+  },
+  {
+    to: '/center/users',
+    label: 'Users',
+    icon: KeyRound,
+    roles: ['CENTER_ADMIN'],
+  },
+  {
+    to: '/center/settings',
+    label: 'Settings',
+    icon: Settings,
+    roles: ['CENTER_ADMIN'],
+  },
 ]
+
+const roleLabel: Record<string, string> = {
+  CENTER_ADMIN: 'Center Admin',
+  RECEPTIONIST: 'Receptionist',
+  TECHNICIAN: 'Radio Technician',
+  REPORT_APPROVER: 'Report Approver',
+}
 
 export default function CenterLayout() {
   const { user, logout } = useAuthStore()
@@ -25,6 +92,10 @@ export default function CenterLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   const handleLogout = () => { logout(); navigate('/login') }
+
+  const visibleNav = navItems.filter(
+    (item) => user?.role && (item.roles as string[]).includes(user.role)
+  )
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -51,7 +122,7 @@ export default function CenterLayout() {
 
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-          {navItems.map(({ to, label, icon: Icon }) => (
+          {visibleNav.map(({ to, label, icon: Icon }) => (
             <NavLink key={to} to={to} onClick={() => setSidebarOpen(false)}
               className={({ isActive }) => clsx(
                 'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
@@ -71,7 +142,9 @@ export default function CenterLayout() {
             </div>
             <div className="overflow-hidden">
               <div className="text-sm font-medium truncate">{user?.fullName}</div>
-              <div className="text-xs text-primary-300 truncate">{user?.role?.replace(/_/g, ' ')}</div>
+              <div className="text-xs text-primary-300 truncate">
+                {user?.role ? (roleLabel[user.role] ?? user.role.replace(/_/g, ' ')) : ''}
+              </div>
             </div>
           </div>
           <button onClick={handleLogout}

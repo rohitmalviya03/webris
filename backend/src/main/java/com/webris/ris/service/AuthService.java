@@ -95,6 +95,10 @@ public class AuthService {
         User user = userRepository.findById(principal.getId()).orElseThrow();
         String centerName = user.getCenter() != null ? user.getCenter().getName() : null;
 
+        Boolean requireReportApproval = user.getCenter() != null
+                ? user.getCenter().getRequireReportApproval()
+                : null;
+
         return AuthResponse.builder()
                 .token(jwt)
                 .userId(principal.getId())
@@ -103,6 +107,7 @@ public class AuthService {
                 .role(principal.getRole())
                 .centerId(principal.getCenterId())
                 .centerName(centerName)
+                .requireReportApproval(requireReportApproval)
                 .build();
     }
 

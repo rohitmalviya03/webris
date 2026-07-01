@@ -1,0 +1,37 @@
+
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Build outputs
+frontend/dist/
+backend/target/
+
+# Logs
+backend/startup.log
+*.log
+
+# Uploads (runtime files - keep folder, ignore contents)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Test artifacts
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local

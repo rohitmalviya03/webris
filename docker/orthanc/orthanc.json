@@ -1,0 +1,44 @@
+{
+  "Name": "RIS Orthanc PACS",
+  "HttpPort": 8042,
+  "DicomPort": 4242,
+  "HttpServerEnabled": true,
+  "DicomServerEnabled": true,
+  "AuthenticationEnabled": true,
+  "RegisteredUsers": {
+    "admin": "admin",
+    "ris": "ris123"
+  },
+  "DicomAet": "ORTHANC",
+  "DicomCheckCalledAet": false,
+  "RemoteAccessAllowed": true,
+  "StorageDirectory": "/var/lib/orthanc/db",
+  "IndexDirectory": "/var/lib/orthanc/db",
+  "OverwriteInstances": false,
+  "CaseSensitivePN": false,
+  "AllowedHosts": ["0.0.0.0"],
+  "Plugins": [],
+  "StorageCompression": false,
+  "MaximumStorageSize": 0,
+  "MaximumPatientCount": 0,
+  "StableAge": 60,
+  "LuaScriptsAtStartup": [],
+  "JobsEngineThreadsCount": 2,
+  "MetricsEnabled": true,
+  "HttpsCACertificates": "",
+  "Pkcs11": {},
+  "OHIF": {
+    "ShowStudyList": false
+  },
+  "DicomWeb": {
+    "Enable": true,
+    "Root": "/wado/",
+    "EnableWado": true,
+    "WadoRoot": "/wado/",
+    "Ssl": false,
+    "QidoRoot": "/wado/",
+    "StowRoot": "/wado/",
+    "PublicRoot": "http://localhost:8042/wado/",
+    "MetadataWorkerThreadsCount": 4
+  }
+}

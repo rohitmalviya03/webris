@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import * as XLSX from 'xlsx'
 import {
   Plus, Edit2, Trash2, FlaskConical, X, Save, Search, Clock, IndianRupee,
-  Stethoscope, Building2, Timer
+  Stethoscope, Building2, Timer, Upload, Download, FileSpreadsheet,
+  CheckCircle2, AlertCircle, Loader2, ChevronRight,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../../services/api'
@@ -46,13 +48,173 @@ const emptyForm = {
 const fmt = (n: number | null) =>
   n != null ? `₹${Number(n).toLocaleString('en-IN')}` : null
 
+// ─── Excel column map ─────────────────────────────────────────────────────────
+// Maps header aliases (case-insensitive) → canonical field name
+const COL_MAP: Record<string, string> = {
+  'test name':               'testName',
+  'testname':                'testName',
+  'name':                    'testName',
+  'short name':              'shortName',
+  'shortname':               'shortName',
+  'code':                    'shortName',
+  'modality':                'modality',
+  'department':              'department',
+  'dept':                    'department',
+  'price':                   'price',
+  'rate':                    'price',
+  'mrp':                     'mrp',
+  'list price':              'mrp',
+  'duration':                'durationMinutes',
+  'duration (min)':          'durationMinutes',
+  'duration minutes':        'durationMinutes',
+  'durationminutes':         'durationMinutes',
+  'scan duration':           'durationMinutes',
+  'tat':                     'reportTatHours',
+  'tat (hours)':             'reportTatHours',
+  'report tat':              'reportTatHours',
+  'report tat hours':        'reportTatHours',
+  'reporttathours':          'reportTatHours',
+  'description':             'description',
+  'preparation':             'preparationInstructions',
+  'prep instructions':       'preparationInstructions',
+  'patient preparation':     'preparationInstructions',
+  'preparationinstructions': 'preparationInstructions',
+}
+
+interface ImportRow {
+  rowNum: number
+  testName: string
+  shortName: string
+  modality: string
+  department: string
+  price: string
+  mrp: string
+  durationMinutes: string
+  reportTatHours: string
+  description: string
+  preparationInstructions: string
+  errors: string[]
+  status: 'pending' | 'success' | 'error'
+  statusMsg?: string
+}
+
+function validateRow(row: Omit<ImportRow, 'errors' | 'status' | 'statusMsg'>): string[] {
+  const errs: string[] = []
+  if (!row.testName?.trim()) errs.push('Test Name is required')
+  if (row.modality && !MODALITIES.includes(row.modality.toUpperCase().replace(/-/g, '_'))) {
+    errs.push(`Invalid modality "${row.modality}" — use CT/MRI/XRAY/USG/PET/MAMMOGRAPHY/FLUOROSCOPY/NUCLEAR_MEDICINE`)
+  }
+  if (row.price && isNaN(Number(row.price))) errs.push('Price must be a number')
+  if (row.mrp   && isNaN(Number(row.mrp)))   errs.push('MRP must be a number')
+  if (row.durationMinutes && isNaN(Number(row.durationMinutes))) errs.push('Duration must be a number')
+  if (row.reportTatHours  && isNaN(Number(row.reportTatHours)))  errs.push('TAT must be a number')
+  return errs
+}
+
+function parseExcel(file: File): Promise<ImportRow[]> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target!.result as ArrayBuffer)
+        const wb   = XLSX.read(data, { type: 'array' })
+        const ws   = wb.Sheets[wb.SheetNames[0]]
+        const raw  = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
+
+        if (raw.length === 0) { reject(new Error('Sheet is empty')); return }
+
+        // Build canonical key map from actual headers
+        const firstRow = raw[0]
+        const headerMap: Record<string, string> = {}
+        for (const key of Object.keys(firstRow)) {
+          const canonical = COL_MAP[key.toLowerCase().trim()]
+          if (canonical) headerMap[key] = canonical
+        }
+
+        const rows: ImportRow[] = raw.map((r, i) => {
+          const mapped: Record<string, string> = {}
+          for (const [orig, canonical] of Object.entries(headerMap)) {
+            mapped[canonical] = String(r[orig] ?? '').trim()
+          }
+
+          // Normalize modality
+          if (mapped.modality) {
+            mapped.modality = mapped.modality.toUpperCase().replace(/-/g, '_')
+          }
+
+          const partial = {
+            rowNum:                  i + 2,
+            testName:                mapped.testName                || '',
+            shortName:               mapped.shortName               || '',
+            modality:                mapped.modality                || '',
+            department:              mapped.department              || '',
+            price:                   mapped.price                   || '',
+            mrp:                     mapped.mrp                     || '',
+            durationMinutes:         mapped.durationMinutes         || '',
+            reportTatHours:          mapped.reportTatHours          || '',
+            description:             mapped.description             || '',
+            preparationInstructions: mapped.preparationInstructions || '',
+          }
+
+          return { ...partial, errors: validateRow(partial), status: 'pending' }
+        }).filter(r => r.testName.trim() || r.shortName.trim()) // skip entirely blank rows
+
+        resolve(rows)
+      } catch (err) {
+        reject(err)
+      }
+    }
+    reader.onerror = () => reject(new Error('Failed to read file'))
+    reader.readAsArrayBuffer(file)
+  })
+}
+
+function downloadTemplate() {
+  const headers = [
+    'Test Name', 'Short Name', 'Modality', 'Department',
+    'Price', 'MRP', 'Duration (min)', 'TAT (hours)',
+    'Description', 'Preparation',
+  ]
+  const examples = [
+    ['CT Brain Plain', 'CT-BRAIN', 'CT', 'Neuroradiology', 1200, 1500, 20, 24,
+      'Non-contrast CT scan of brain', 'No special preparation required'],
+    ['MRI Lumbar Spine', 'MRI-LS', 'MRI', 'Musculoskeletal', 3500, 4000, 45, 48,
+      'MRI of lumbar spine with and without contrast', 'Remove all metal objects'],
+    ['USG Abdomen', 'USG-ABD', 'USG', 'Abdominal', 600, 800, 15, 12,
+      'Ultrasound examination of the abdomen', 'Fasting 4 hours before scan'],
+    ['X-Ray Chest PA', 'XRAY-CXR', 'XRAY', 'Chest & Cardiac', 250, 300, 5, 2,
+      'Posteroanterior chest radiograph', ''],
+  ]
+
+  const ws   = XLSX.utils.aoa_to_sheet([headers, ...examples])
+  ws['!cols'] = headers.map(() => ({ wch: 22 }))
+  const wb   = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Tests')
+  XLSX.writeFile(wb, 'test_catalog_import_template.xlsx')
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export default function TestCatalog() {
   const qc = useQueryClient()
+
+  // Single-test modal
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing]     = useState<Test | null>(null)
   const [form, setForm]           = useState(emptyForm)
-  const [search, setSearch]       = useState('')
+
+  // Search / filter
+  const [search, setSearch]             = useState('')
   const [filterModality, setFilterModality] = useState('')
+
+  // Import modal
+  const [importOpen, setImportOpen]   = useState(false)
+  const [importRows, setImportRows]   = useState<ImportRow[]>([])
+  const [importing, setImporting]     = useState(false)
+  const [importDone, setImportDone]   = useState(false)
+  const [progress, setProgress]       = useState({ done: 0, total: 0 })
+  const [isDragging, setIsDragging]   = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const { data: tests = [], isLoading } = useQuery<Test[]>({
     queryKey: ['test-catalog'],
@@ -63,10 +225,10 @@ export default function TestCatalog() {
     mutationFn: (data: typeof emptyForm) => {
       const payload = {
         ...data,
-        price:           data.price           ? parseFloat(data.price)           : null,
-        mrp:             data.mrp             ? parseFloat(data.mrp)             : null,
-        durationMinutes: data.durationMinutes ? parseInt(data.durationMinutes)   : null,
-        reportTatHours:  data.reportTatHours  ? parseInt(data.reportTatHours)    : null,
+        price:           data.price           ? parseFloat(data.price)         : null,
+        mrp:             data.mrp             ? parseFloat(data.mrp)           : null,
+        durationMinutes: data.durationMinutes ? parseInt(data.durationMinutes) : null,
+        reportTatHours:  data.reportTatHours  ? parseInt(data.reportTatHours)  : null,
       }
       return editing
         ? api.put(`/test-catalog/${editing.id}`, payload)
@@ -106,7 +268,6 @@ export default function TestCatalog() {
     setModalOpen(true)
   }
   const closeModal = () => { setModalOpen(false); setEditing(null); setForm(emptyForm) }
-
   const field = (key: keyof typeof emptyForm) => ({
     value: form[key],
     onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
@@ -123,6 +284,88 @@ export default function TestCatalog() {
     return matchSearch && matchModality
   })
 
+  // ── Import modal helpers ───────────────────────────────────────────────────
+
+  const closeImport = () => {
+    if (importing) return
+    setImportOpen(false)
+    setImportRows([])
+    setImportDone(false)
+    setProgress({ done: 0, total: 0 })
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const handleFile = useCallback(async (file: File) => {
+    const ext = file.name.split('.').pop()?.toLowerCase()
+    if (ext !== 'xlsx' && ext !== 'xls') {
+      toast.error('Please upload an .xlsx or .xls file')
+      return
+    }
+    try {
+      const rows = await parseExcel(file)
+      if (rows.length === 0) { toast.error('No data rows found in the file'); return }
+      setImportRows(rows)
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to parse file')
+    }
+  }, [])
+
+  const onFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) handleFile(file)
+    e.target.value = ''
+  }
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(false)
+    const file = e.dataTransfer.files?.[0]
+    if (file) handleFile(file)
+  }
+
+  const runImport = async () => {
+    const valid = importRows.filter(r => r.errors.length === 0)
+    if (valid.length === 0) { toast.error('No valid rows to import'); return }
+
+    setImporting(true)
+    setProgress({ done: 0, total: valid.length })
+
+    let succeeded = 0
+    const updated = [...importRows]
+
+    for (const row of valid) {
+      const idx = updated.findIndex(r => r.rowNum === row.rowNum)
+      try {
+        await api.post('/test-catalog', {
+          testName:                row.testName,
+          shortName:               row.shortName      || null,
+          modality:                row.modality       || null,
+          department:              row.department     || null,
+          price:                   row.price          ? parseFloat(row.price)          : null,
+          mrp:                     row.mrp            ? parseFloat(row.mrp)            : null,
+          durationMinutes:         row.durationMinutes ? parseInt(row.durationMinutes) : null,
+          reportTatHours:          row.reportTatHours  ? parseInt(row.reportTatHours)  : null,
+          description:             row.description     || null,
+          preparationInstructions: row.preparationInstructions || null,
+        })
+        updated[idx] = { ...updated[idx], status: 'success' }
+        succeeded++
+      } catch {
+        updated[idx] = { ...updated[idx], status: 'error', statusMsg: 'Server rejected this row' }
+      }
+      setImportRows([...updated])
+      setProgress(p => ({ ...p, done: p.done + 1 }))
+    }
+
+    setImporting(false)
+    setImportDone(true)
+    qc.invalidateQueries({ queryKey: ['test-catalog'] })
+    toast.success(`${succeeded} of ${valid.length} tests imported`)
+  }
+
+  const validCount   = importRows.filter(r => r.errors.length === 0).length
+  const invalidCount = importRows.filter(r => r.errors.length > 0).length
+
   return (
     <div>
       <div className="page-header">
@@ -132,9 +375,18 @@ export default function TestCatalog() {
             Manage all radiology tests — name, pricing, duration, TAT, and patient prep.
           </p>
         </div>
-        <button onClick={openNew} className="btn-primary">
-          <Plus className="w-4 h-4" /> Add Test
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setImportOpen(true)}
+            className="btn-secondary flex items-center gap-2"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            Import from Excel
+          </button>
+          <button onClick={openNew} className="btn-primary">
+            <Plus className="w-4 h-4" /> Add Test
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -158,6 +410,7 @@ export default function TestCatalog() {
         </select>
       </div>
 
+      {/* Cards */}
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {Array.from({ length: 6 }).map((_, i) => (
@@ -172,20 +425,24 @@ export default function TestCatalog() {
           </h3>
           <p className="text-gray-400 text-sm mt-1 max-w-sm mx-auto">
             {tests.length === 0
-              ? 'Add tests like CT Brain, MRI Spine, USG Abdomen with prices and scan durations.'
+              ? 'Add tests individually or import multiple at once from an Excel file.'
               : 'Try a different search or filter.'}
           </p>
           {tests.length === 0 && (
-            <button onClick={openNew} className="btn-primary mt-5 mx-auto">
-              <Plus className="w-4 h-4" /> Add First Test
-            </button>
+            <div className="flex items-center justify-center gap-3 mt-5">
+              <button onClick={() => setImportOpen(true)} className="btn-secondary">
+                <FileSpreadsheet className="w-4 h-4" /> Import from Excel
+              </button>
+              <button onClick={openNew} className="btn-primary">
+                <Plus className="w-4 h-4" /> Add Test
+              </button>
+            </div>
           )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {visible.map(t => (
             <div key={t.id} className="card p-5 hover:shadow-md transition-shadow flex flex-col gap-3">
-              {/* Header */}
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -222,7 +479,6 @@ export default function TestCatalog() {
                 </div>
               </div>
 
-              {/* Pricing */}
               {(t.price != null || t.mrp != null) && (
                 <div className="flex items-center gap-3">
                   {t.price != null && (
@@ -232,9 +488,7 @@ export default function TestCatalog() {
                     </div>
                   )}
                   {t.mrp != null && (
-                    <div className="text-xs text-gray-400 line-through">
-                      MRP {fmt(t.mrp)}
-                    </div>
+                    <div className="text-xs text-gray-400 line-through">MRP {fmt(t.mrp)}</div>
                   )}
                   {t.price != null && t.mrp != null && t.mrp > t.price && (
                     <span className="text-xs bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-medium">
@@ -244,7 +498,6 @@ export default function TestCatalog() {
                 </div>
               )}
 
-              {/* Meta row */}
               <div className="flex items-center gap-4 text-xs text-gray-500">
                 {t.durationMinutes != null && (
                   <span className="flex items-center gap-1">
@@ -261,7 +514,6 @@ export default function TestCatalog() {
               {t.description && (
                 <p className="text-xs text-gray-500 line-clamp-2">{t.description}</p>
               )}
-
               {t.preparationInstructions && (
                 <div className="text-xs bg-amber-50 text-amber-800 rounded-lg px-3 py-2 border border-amber-100">
                   <span className="font-medium">Prep: </span>{t.preparationInstructions}
@@ -272,7 +524,7 @@ export default function TestCatalog() {
         </div>
       )}
 
-      {/* Create / Edit Modal */}
+      {/* ── Single test modal ─────────────────────────────────────────────── */}
       <Modal
         open={modalOpen}
         onClose={closeModal}
@@ -280,7 +532,6 @@ export default function TestCatalog() {
         size="lg"
       >
         <div className="space-y-4">
-          {/* Name + Short name */}
           <div className="grid grid-cols-3 gap-4">
             <div className="col-span-2">
               <label className="label">Test Name *</label>
@@ -292,7 +543,6 @@ export default function TestCatalog() {
             </div>
           </div>
 
-          {/* Modality + Department */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="label">Modality</label>
@@ -303,19 +553,13 @@ export default function TestCatalog() {
             </div>
             <div>
               <label className="label">Department</label>
-              <input
-                {...field('department')}
-                list="dept-list"
-                className="input"
-                placeholder="e.g. Neuroradiology"
-              />
+              <input {...field('department')} list="dept-list" className="input" placeholder="e.g. Neuroradiology" />
               <datalist id="dept-list">
                 {DEPARTMENTS.map(d => <option key={d} value={d} />)}
               </datalist>
             </div>
           </div>
 
-          {/* Pricing */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="label">Price (₹)</label>
@@ -328,7 +572,6 @@ export default function TestCatalog() {
             </div>
           </div>
 
-          {/* Duration + TAT */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="label">Scan Duration (minutes)</label>
@@ -342,26 +585,15 @@ export default function TestCatalog() {
 
           <hr />
 
-          {/* Description */}
           <div>
             <label className="label">Description</label>
-            <textarea
-              {...field('description')}
-              rows={2}
-              className="input resize-none"
-              placeholder="Brief description of what this test covers…"
-            />
+            <textarea {...field('description')} rows={2} className="input resize-none"
+              placeholder="Brief description of what this test covers…" />
           </div>
-
-          {/* Prep */}
           <div>
             <label className="label">Patient Preparation Instructions</label>
-            <textarea
-              {...field('preparationInstructions')}
-              rows={3}
-              className="input resize-y"
-              placeholder="e.g. Fasting required 4 hours before the scan. Remove all metal objects."
-            />
+            <textarea {...field('preparationInstructions')} rows={3} className="input resize-y"
+              placeholder="e.g. Fasting required 4 hours before the scan. Remove all metal objects." />
           </div>
 
           <div className="flex gap-3 pt-2 border-t">
@@ -376,6 +608,241 @@ export default function TestCatalog() {
             <button onClick={closeModal} className="btn-secondary">
               <X className="w-4 h-4" /> Cancel
             </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Import from Excel modal ───────────────────────────────────────── */}
+      <Modal
+        open={importOpen}
+        onClose={closeImport}
+        title="Import Tests from Excel"
+        size="lg"
+      >
+        <div className="space-y-5">
+
+          {/* Step 1 — download template */}
+          {importRows.length === 0 && (
+            <>
+              <div className="flex items-start gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+                <FileSpreadsheet className="w-4 h-4 flex-shrink-0 mt-0.5 text-blue-500" />
+                <span>
+                  Download the Excel template, fill in your tests, then upload it below.
+                  Column headers are flexible — common aliases are accepted.
+                </span>
+              </div>
+
+              <button
+                onClick={downloadTemplate}
+                className="btn-secondary w-full justify-center gap-2"
+              >
+                <Download className="w-4 h-4" />
+                Download Excel Template
+              </button>
+
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-200" />
+                </div>
+                <div className="relative flex justify-center text-xs text-gray-400 bg-white px-2 w-fit mx-auto">
+                  or upload your own file
+                </div>
+              </div>
+
+              {/* Drop zone */}
+              <div
+                onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={onDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors ${
+                  isDragging
+                    ? 'border-primary-400 bg-primary-50'
+                    : 'border-gray-300 hover:border-primary-300 hover:bg-gray-50'
+                }`}
+              >
+                <Upload className="w-8 h-8 text-gray-400 mx-auto mb-3" />
+                <p className="text-sm font-medium text-gray-700">
+                  Drop your Excel file here, or <span className="text-primary-600">browse</span>
+                </p>
+                <p className="text-xs text-gray-400 mt-1">.xlsx or .xls — max 5 MB</p>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".xlsx,.xls"
+                  className="hidden"
+                  onChange={onFileInput}
+                />
+              </div>
+
+              {/* Column reference */}
+              <details className="group">
+                <summary className="flex items-center gap-1 text-xs text-gray-500 cursor-pointer select-none">
+                  <ChevronRight className="w-3.5 h-3.5 group-open:rotate-90 transition-transform" />
+                  Accepted column headers
+                </summary>
+                <div className="mt-2 grid grid-cols-2 gap-x-8 gap-y-1 text-xs text-gray-500 pl-5">
+                  {[
+                    ['Test Name *', 'test name, testname, name'],
+                    ['Short Name', 'short name, shortname, code'],
+                    ['Modality', 'modality'],
+                    ['Department', 'department, dept'],
+                    ['Price', 'price, rate'],
+                    ['MRP', 'mrp, list price'],
+                    ['Duration (min)', 'duration, duration (min), scan duration'],
+                    ['TAT (hours)', 'tat, tat (hours), report tat'],
+                    ['Description', 'description'],
+                    ['Preparation', 'preparation, prep instructions, patient preparation'],
+                  ].map(([field, aliases]) => (
+                    <div key={field}>
+                      <span className="font-medium text-gray-700">{field}:</span> {aliases}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            </>
+          )}
+
+          {/* Step 2 — preview & import */}
+          {importRows.length > 0 && (
+            <>
+              {/* Summary bar */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-sm text-gray-600 font-medium">
+                  {importRows.length} row{importRows.length !== 1 ? 's' : ''} parsed
+                </span>
+                {validCount > 0 && (
+                  <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> {validCount} valid
+                  </span>
+                )}
+                {invalidCount > 0 && (
+                  <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700">
+                    <AlertCircle className="w-3.5 h-3.5" /> {invalidCount} with errors
+                  </span>
+                )}
+                {!importing && !importDone && (
+                  <button
+                    onClick={() => { setImportRows([]); setImportDone(false) }}
+                    className="ml-auto text-xs text-gray-400 hover:text-gray-600 underline"
+                  >
+                    Upload different file
+                  </button>
+                )}
+              </div>
+
+              {/* Progress bar */}
+              {importing && (
+                <div>
+                  <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                    <span>Importing…</span>
+                    <span>{progress.done} / {progress.total}</span>
+                  </div>
+                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-primary-500 rounded-full transition-all duration-300"
+                      style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Preview table */}
+              <div className="overflow-x-auto rounded-xl border border-gray-200 max-h-72">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="px-3 py-2 text-left text-gray-600 font-semibold w-8">#</th>
+                      <th className="px-3 py-2 text-left text-gray-600 font-semibold">Test Name</th>
+                      <th className="px-3 py-2 text-left text-gray-600 font-semibold">Modality</th>
+                      <th className="px-3 py-2 text-left text-gray-600 font-semibold">Price</th>
+                      <th className="px-3 py-2 text-left text-gray-600 font-semibold">MRP</th>
+                      <th className="px-3 py-2 text-left text-gray-600 font-semibold">Duration</th>
+                      <th className="px-3 py-2 text-left text-gray-600 font-semibold w-24">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {importRows.map(row => (
+                      <tr
+                        key={row.rowNum}
+                        className={
+                          row.status === 'success' ? 'bg-green-50' :
+                          row.status === 'error'   ? 'bg-red-50' :
+                          row.errors.length > 0    ? 'bg-amber-50' : ''
+                        }
+                      >
+                        <td className="px-3 py-2 text-gray-400">{row.rowNum}</td>
+                        <td className="px-3 py-2 font-medium text-gray-800 max-w-[180px] truncate">
+                          {row.testName || <span className="text-red-400 italic">missing</span>}
+                        </td>
+                        <td className="px-3 py-2 text-gray-600">{row.modality || '—'}</td>
+                        <td className="px-3 py-2 text-gray-600">{row.price ? `₹${row.price}` : '—'}</td>
+                        <td className="px-3 py-2 text-gray-600">{row.mrp   ? `₹${row.mrp}`   : '—'}</td>
+                        <td className="px-3 py-2 text-gray-600">
+                          {row.durationMinutes ? `${row.durationMinutes}m` : '—'}
+                        </td>
+                        <td className="px-3 py-2">
+                          {row.status === 'success' && (
+                            <span className="inline-flex items-center gap-1 text-green-700 font-medium">
+                              <CheckCircle2 className="w-3.5 h-3.5" /> Saved
+                            </span>
+                          )}
+                          {row.status === 'error' && (
+                            <span className="inline-flex items-center gap-1 text-red-600">
+                              <AlertCircle className="w-3.5 h-3.5" /> {row.statusMsg}
+                            </span>
+                          )}
+                          {row.status === 'pending' && row.errors.length === 0 && (
+                            importing
+                              ? <Loader2 className="w-3.5 h-3.5 text-gray-400 animate-spin" />
+                              : <span className="text-gray-400">Ready</span>
+                          )}
+                          {row.status === 'pending' && row.errors.length > 0 && (
+                            <span className="text-amber-700" title={row.errors.join(', ')}>
+                              <AlertCircle className="w-3.5 h-3.5 inline" /> {row.errors[0]}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {invalidCount > 0 && !importDone && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  <AlertCircle className="w-3.5 h-3.5 inline mr-1" />
+                  {invalidCount} row{invalidCount !== 1 ? 's' : ''} with errors will be skipped.
+                  Only the {validCount} valid rows will be imported.
+                </p>
+              )}
+            </>
+          )}
+
+          {/* Actions */}
+          <div className="flex gap-3 pt-2 border-t">
+            {importRows.length > 0 && !importDone && (
+              <button
+                onClick={runImport}
+                disabled={importing || validCount === 0}
+                className="btn-primary flex-1 justify-center"
+              >
+                {importing
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Importing…</>
+                  : <><Upload className="w-4 h-4" /> Import {validCount} Test{validCount !== 1 ? 's' : ''}</>
+                }
+              </button>
+            )}
+            {importDone && (
+              <button onClick={closeImport} className="btn-primary flex-1 justify-center">
+                <CheckCircle2 className="w-4 h-4" /> Done
+              </button>
+            )}
+            {!importing && (
+              <button onClick={closeImport} className="btn-secondary">
+                <X className="w-4 h-4" /> {importDone ? 'Close' : 'Cancel'}
+              </button>
+            )}
           </div>
         </div>
       </Modal>

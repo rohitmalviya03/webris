@@ -23,6 +23,7 @@ export interface AuthUser {
   role: Role
   centerId: number | null
   centerName: string | null
+  requireReportApproval: boolean | null
 }
 
 export interface Patient {

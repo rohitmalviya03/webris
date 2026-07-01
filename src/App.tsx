@@ -16,6 +16,7 @@ import ReportApproval from './pages/center/reports/ReportApproval'
 import ReportTemplates from './pages/center/templates/ReportTemplates'
 import TestCatalog from './pages/center/tests/TestCatalog'
 import UserManagement from './pages/center/users/UserManagement'
+import CenterSettings from './pages/center/settings/CenterSettings'
 import ReportPrint from './pages/center/reports/ReportPrint'
 import BillingPrint from './pages/center/billing/BillingPrint'
 import DoctorDashboard from './pages/radiologist/Dashboard'
@@ -25,11 +26,26 @@ import AdminDashboard from './pages/superadmin/Dashboard'
 import CenterList from './pages/superadmin/CenterList'
 import CenterForm from './pages/superadmin/CenterForm'
 import UserList from './pages/superadmin/UserList'
+import type { Role } from './types'
 
+/** Enforces authentication + optional role allowlist. Redirects unauthenticated users to /login. */
 function ProtectedRoute({ children, roles }: { children: React.ReactNode; roles?: string[] }) {
   const { isAuthenticated, user } = useAuthStore()
   if (!isAuthenticated) return <Navigate to="/login" replace />
   if (roles && user && !roles.includes(user.role)) return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
+/**
+ * Route guard used *inside* a portal layout.
+ * Redirects to /center/dashboard when the current user's role is not in the allowlist,
+ * instead of bouncing them all the way back to /.
+ */
+function CenterRoleGuard({ children, roles }: { children: React.ReactNode; roles: Role[] }) {
+  const { user } = useAuthStore()
+  if (!user || !(roles as string[]).includes(user.role)) {
+    return <Navigate to="/center/dashboard" replace />
+  }
   return <>{children}</>
 }
 
@@ -61,27 +77,97 @@ export default function App() {
           <Route path="users" element={<UserList />} />
         </Route>
 
-        {/* Center Portal */}
+        {/* Center Portal — accessible by all center roles */}
         <Route path="/center" element={
-          <ProtectedRoute roles={['SUPER_ADMIN','CENTER_ADMIN','RECEPTIONIST','TECHNICIAN','REPORT_APPROVER']}>
+          <ProtectedRoute roles={['CENTER_ADMIN', 'RECEPTIONIST', 'TECHNICIAN', 'REPORT_APPROVER']}>
             <CenterLayout />
           </ProtectedRoute>
         }>
+          {/* All center roles */}
           <Route path="dashboard" element={<CenterDashboard />} />
-          <Route path="patients" element={<PatientList />} />
-          <Route path="patients/new" element={<PatientForm />} />
-          <Route path="patients/:id/edit" element={<PatientForm />} />
-          <Route path="studies" element={<StudyList />} />
-          <Route path="studies/new" element={<StudyForm />} />
-          <Route path="billing" element={<BillingList />} />
-          <Route path="billing/new" element={<BillingForm />} />
-          <Route path="billing/:studyId/print" element={<BillingPrint />} />
-          <Route path="assignments" element={<CaseAssignment />} />
-          <Route path="approvals" element={<ReportApproval />} />
-          <Route path="templates" element={<ReportTemplates />} />
-          <Route path="tests" element={<TestCatalog />} />
-          <Route path="users" element={<UserManagement />} />
-          <Route path="reports/:studyId/print" element={<ReportPrint />} />
+
+          {/* Receptionist + Admin */}
+          <Route path="patients" element={
+            <CenterRoleGuard roles={['CENTER_ADMIN', 'RECEPTIONIST']}>
+              <PatientList />
+            </CenterRoleGuard>
+          } />
+          <Route path="patients/new" element={
+            <CenterRoleGuard roles={['CENTER_ADMIN', 'RECEPTIONIST']}>
+              <PatientForm />
+            </CenterRoleGuard>
+          } />
+          <Route path="patients/:id/edit" element={
+            <CenterRoleGuard roles={['CENTER_ADMIN', 'RECEPTIONIST']}>
+              <PatientForm />
+            </CenterRoleGuard>
+          } />
+          <Route path="billing" element={
+            <CenterRoleGuard roles={['CENTER_ADMIN', 'RECEPTIONIST']}>
+              <BillingList />
+            </CenterRoleGuard>
+          } />
+          <Route path="billing/new" element={
+            <CenterRoleGuard roles={['CENTER_ADMIN', 'RECEPTIONIST']}>
+              <BillingForm />
+            </CenterRoleGuard>
+          } />
+          <Route path="billing/:studyId/print" element={
+            <CenterRoleGuard roles={['CENTER_ADMIN', 'RECEPTIONIST']}>
+              <BillingPrint />
+            </CenterRoleGuard>
+          } />
+
+          {/* Receptionist + Technician + Admin */}
+          <Route path="studies" element={
+            <CenterRoleGuard roles={['CENTER_ADMIN', 'RECEPTIONIST', 'TECHNICIAN']}>
+              <StudyList />
+            </CenterRoleGuard>
+          } />
+          <Route path="studies/new" element={
+            <CenterRoleGuard roles={['CENTER_ADMIN', 'RECEPTIONIST']}>
+              <StudyForm />
+            </CenterRoleGuard>
+          } />
+
+          {/* Report Approver + Admin */}
+          <Route path="assignments" element={
+            <CenterRoleGuard roles={['CENTER_ADMIN', 'REPORT_APPROVER']}>
+              <CaseAssignment />
+            </CenterRoleGuard>
+          } />
+          <Route path="approvals" element={
+            <CenterRoleGuard roles={['CENTER_ADMIN', 'REPORT_APPROVER']}>
+              <ReportApproval />
+            </CenterRoleGuard>
+          } />
+          <Route path="reports/:studyId/print" element={
+            <CenterRoleGuard roles={['CENTER_ADMIN', 'REPORT_APPROVER']}>
+              <ReportPrint />
+            </CenterRoleGuard>
+          } />
+
+          {/* Admin only */}
+          <Route path="templates" element={
+            <CenterRoleGuard roles={['CENTER_ADMIN']}>
+              <ReportTemplates />
+            </CenterRoleGuard>
+          } />
+          <Route path="tests" element={
+            <CenterRoleGuard roles={['CENTER_ADMIN']}>
+              <TestCatalog />
+            </CenterRoleGuard>
+          } />
+          <Route path="users" element={
+            <CenterRoleGuard roles={['CENTER_ADMIN']}>
+              <UserManagement />
+            </CenterRoleGuard>
+          } />
+          <Route path="settings" element={
+            <CenterRoleGuard roles={['CENTER_ADMIN']}>
+              <CenterSettings />
+            </CenterRoleGuard>
+          } />
         </Route>
 
         {/* Radiologist Portal */}
